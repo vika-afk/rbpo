@@ -1,0 +1,731 @@
+{
+  "info": {
+    "name": "lb4 - theatre security",
+    "description": "Демонстрация Basic Auth, CSRF, регистрации, ролей и бизнес-операций. Коллекция создаёт уникальные email и собственные представления при каждом запуске, поэтому повторный запуск не требует re-seed. Демо-пароль всех seed-пользователей: Password1!",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "userEmail", "value": "user@example.com" },
+    { "key": "userPassword", "value": "Password1!" },
+    { "key": "managerEmail", "value": "manager@example.com" },
+    { "key": "managerPassword", "value": "Password1!" },
+    { "key": "adminEmail", "value": "admin@example.com" },
+    { "key": "adminPassword", "value": "Password1!" },
+    { "key": "blockedEmail", "value": "blocked@example.com" },
+    { "key": "blockedPassword", "value": "Password1!" },
+    { "key": "otherEmail", "value": "other@example.com" },
+    { "key": "registrationPassword", "value": "Password1!" },
+    { "key": "createdUserPassword", "value": "Password1!" },
+    { "key": "runSuffix", "value": "" },
+    { "key": "registeredEmail", "value": "" },
+    { "key": "roleAttemptEmail", "value": "" },
+    { "key": "weakEmail", "value": "" },
+    { "key": "createdUserEmail", "value": "" },
+    { "key": "runStartTime", "value": "" },
+    { "key": "runManagerStartTime", "value": "" },
+    { "key": "runManagerRescheduleTime", "value": "" },
+    { "key": "runPerformanceId", "value": "" },
+    { "key": "xsrfToken", "value": "" },
+    { "key": "createdPlayId", "value": "" },
+    { "key": "createdPerformanceId", "value": "" },
+    { "key": "purchasedTicketId", "value": "" },
+    { "key": "createdUserId", "value": "" }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const token = pm.cookies.get('XSRF-TOKEN');",
+          "if (token) {",
+          "  pm.collectionVariables.set('xsrfToken', token);",
+          "  pm.request.headers.upsert({ key: 'X-XSRF-TOKEN', value: token });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "00. Auth and CSRF",
+      "item": [
+        {
+          "name": "csrf - получить токен и cookie, подготовить уникальные данные запуска",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/auth/csrf" }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const suffix = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);",
+                  "pm.collectionVariables.set('runSuffix', suffix);",
+                  "pm.collectionVariables.set('registeredEmail', `registered.${suffix}@example.test`);",
+                  "pm.collectionVariables.set('roleAttemptEmail', `role.attempt.${suffix}@example.test`);",
+                  "pm.collectionVariables.set('weakEmail', `weak.${suffix}@example.test`);",
+                  "pm.collectionVariables.set('createdUserEmail', `managed.${suffix}@example.test`);",
+                  "const future = (baseYear) => new Date(",
+                  "  Date.UTC(baseYear, 0, 1)",
+                  "  + Math.floor(Math.random() * 100000) * 86400000",
+                  "  + Math.floor(Math.random() * 24 * 60) * 60000",
+                  ").toISOString().slice(0, 19);",
+                  "pm.collectionVariables.set('runStartTime', future(2100));",
+                  "pm.collectionVariables.set('runManagerStartTime', future(2110));",
+                  "pm.collectionVariables.set('runManagerRescheduleTime', future(2120));",
+                  "pm.collectionVariables.set('runPerformanceId', '');",
+                  "pm.collectionVariables.set('createdPlayId', '');",
+                  "pm.collectionVariables.set('createdPerformanceId', '');",
+                  "pm.collectionVariables.set('purchasedTicketId', '');",
+                  "pm.collectionVariables.set('createdUserId', '');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('xsrfToken', body.token);",
+                  "pm.test('token and header returned', () => {",
+                  "  pm.expect(body.headerName).to.eql('X-XSRF-TOKEN');",
+                  "  pm.expect(body.token).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "register - успешная регистрация (роль USER)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Registered User\",\n  \"email\": \"{{registeredEmail}}\",\n  \"password\": \"{{registrationPassword}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/register" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('self-registration always creates USER', () => pm.expect(pm.response.json().role).to.eql('USER'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "register - попытка передать role=ADMIN игнорируется",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Role Attempt\",\n  \"email\": \"{{roleAttemptEmail}}\",\n  \"password\": \"{{registrationPassword}}\",\n  \"role\": \"ADMIN\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/register" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('role is still USER', () => pm.expect(pm.response.json().role).to.eql('USER'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "register - слабый пароль (400)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Weak Password\",\n  \"email\": \"{{weakEmail}}\",\n  \"password\": \"pass123\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/register" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "register - повторный email (409)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Registered User\",\n  \"email\": \"{{registeredEmail}}\",\n  \"password\": \"{{registrationPassword}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/register" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "setup - MANAGER создаёт представление для повторяемых USER-сценариев",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"playId\": 1,\n  \"hallId\": 1,\n  \"startTime\": \"{{runStartTime}}\",\n  \"basePrice\": 1000.00,\n  \"status\": \"SCHEDULED\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/performances" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{managerEmail}}" }, { "key": "password", "value": "{{managerPassword}}" }] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('runPerformanceId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01. Public endpoints",
+      "item": [
+        {
+          "name": "GET plays - без аутентификации",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/plays" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "GET theatre-halls - без аутентификации",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/theatre-halls" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "GET performances - без аутентификации",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/performances" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02. USER scenarios",
+      "item": [
+        {
+          "name": "GET auth/me - текущий пользователь",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/auth/me" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{userEmail}}" }, { "key": "password", "value": "{{userPassword}}" }] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('role USER', () => pm.expect(pm.response.json().role).to.eql('USER'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET tickets/my - только свои билеты",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/tickets/my" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{userEmail}}" }, { "key": "password", "value": "{{userPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "GET tickets - USER не видит все билеты (403)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/tickets" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{userEmail}}" }, { "key": "password", "value": "{{userPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"] } }
+          ]
+        },
+        {
+          "name": "POST purchase - покупка себе",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"performanceId\": {{runPerformanceId}},\n  \"userId\": 3,\n  \"seatNumber\": 1\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/tickets/purchase" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{userEmail}}" }, { "key": "password", "value": "{{userPassword}}" }] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('ticket is SOLD', () => pm.expect(pm.response.json().status).to.eql('SOLD'));",
+                  "pm.collectionVariables.set('purchasedTicketId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST purchase - чужой userId (403)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"performanceId\": {{runPerformanceId}},\n  \"userId\": 5,\n  \"seatNumber\": 2\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/tickets/purchase" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{userEmail}}" }, { "key": "password", "value": "{{userPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"] } }
+          ]
+        },
+        {
+          "name": "POST purchase - занятое место (409)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"performanceId\": {{runPerformanceId}},\n  \"userId\": 3,\n  \"seatNumber\": 1\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/tickets/purchase" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{userEmail}}" }, { "key": "password", "value": "{{userPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('409 Conflict', () => pm.response.to.have.status(409));"] } }
+          ]
+        },
+        {
+          "name": "POST refund - возврат своего билета",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/tickets/{{purchasedTicketId}}/refund" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{userEmail}}" }, { "key": "password", "value": "{{userPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));", "pm.test('REFUNDED', () => pm.expect(pm.response.json().status).to.eql('REFUNDED'));"] } }
+          ]
+        },
+        {
+          "name": "POST refund - чужой билет (403)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/tickets/5/refund" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{userEmail}}" }, { "key": "password", "value": "{{userPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"] } }
+          ]
+        },
+        {
+          "name": "POST archive - USER не может снять пьесу (403)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/plays/1/archive" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{userEmail}}" }, { "key": "password", "value": "{{userPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03. MANAGER scenarios",
+      "item": [
+        {
+          "name": "POST plays - создать пьесу",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Новая пьеса\",\n  \"durationMinutes\": 90,\n  \"ageLimit\": 12,\n  \"archived\": false\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/plays" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{managerEmail}}" }, { "key": "password", "value": "{{managerPassword}}" }] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('createdPlayId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST plays/{id}/archive - MANAGER может архивировать",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/plays/{{createdPlayId}}/archive" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{managerEmail}}" }, { "key": "password", "value": "{{managerPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));", "pm.test('archived', () => pm.expect(pm.response.json().archived).to.eql(true));"] } }
+          ]
+        },
+        {
+          "name": "DELETE play - MANAGER не может удалить (403)",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/plays/{{createdPlayId}}" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{managerEmail}}" }, { "key": "password", "value": "{{managerPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"] } }
+          ]
+        },
+        {
+          "name": "POST performances - создать представление",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"playId\": 1,\n  \"hallId\": 1,\n  \"startTime\": \"{{runManagerStartTime}}\",\n  \"basePrice\": 1000.00,\n  \"status\": \"SCHEDULED\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/performances" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{managerEmail}}" }, { "key": "password", "value": "{{managerPassword}}" }] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('createdPerformanceId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST performances/{id}/reschedule - перенос",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hallId\": 2,\n  \"startTime\": \"{{runManagerRescheduleTime}}\",\n  \"basePrice\": 1200.00\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/performances/{{createdPerformanceId}}/reschedule" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{managerEmail}}" }, { "key": "password", "value": "{{managerPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "POST performances/{id}/cancel - отмена",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/performances/{{createdPerformanceId}}/cancel" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{managerEmail}}" }, { "key": "password", "value": "{{managerPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));", "pm.test('CANCELLED', () => pm.expect(pm.response.json().status).to.eql('CANCELLED'));"] } }
+          ]
+        },
+        {
+          "name": "POST cancel завершённого представления (409)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/performances/4/cancel" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{managerEmail}}" }, { "key": "password", "value": "{{managerPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('409 Conflict', () => pm.response.to.have.status(409));"] } }
+          ]
+        },
+        {
+          "name": "DELETE play с будущими представлениями (403 для MANAGER)",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/plays/1" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{managerEmail}}" }, { "key": "password", "value": "{{managerPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"] } }
+          ]
+        },
+        {
+          "name": "POST plays без CSRF (403)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Без CSRF\",\n  \"durationMinutes\": 90,\n  \"ageLimit\": 12,\n  \"archived\": false\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/plays" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{managerEmail}}" }, { "key": "password", "value": "{{managerPassword}}" }] }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.request.headers.remove('X-XSRF-TOKEN');"]
+              }
+            },
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04. ADMIN scenarios",
+      "item": [
+        {
+          "name": "GET users - список пользователей",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/users" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{adminEmail}}" }, { "key": "password", "value": "{{adminPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "GET tickets - ADMIN видит все билеты",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/tickets" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{adminEmail}}" }, { "key": "password", "value": "{{adminPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "DELETE play с будущими представлениями (409)",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/plays/1" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{adminEmail}}" }, { "key": "password", "value": "{{adminPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('409 Conflict', () => pm.response.to.have.status(409));"] } }
+          ]
+        },
+        {
+          "name": "POST refund зарезервированного билета (409)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/tickets/3/refund" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{adminEmail}}" }, { "key": "password", "value": "{{adminPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('409 Conflict', () => pm.response.to.have.status(409));"] } }
+          ]
+        },
+        {
+          "name": "DELETE созданную пьесу",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/plays/{{createdPlayId}}" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{adminEmail}}" }, { "key": "password", "value": "{{adminPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('204 No Content', () => pm.response.to.have.status(204));"] } }
+          ]
+        },
+        {
+          "name": "POST users - создать MANAGER",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Managed Manager\",\n  \"email\": \"{{createdUserEmail}}\",\n  \"password\": \"{{createdUserPassword}}\",\n  \"role\": \"MANAGER\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/users" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{adminEmail}}" }, { "key": "password", "value": "{{adminPassword}}" }] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('role MANAGER', () => pm.expect(pm.response.json().role).to.eql('MANAGER'));",
+                  "pm.collectionVariables.set('createdUserId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH users/{id} - заблокировать",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"blocked\": true\n}" },
+            "url": { "raw": "{{baseUrl}}/api/users/{{createdUserId}}" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{adminEmail}}" }, { "key": "password", "value": "{{adminPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));", "pm.test('blocked', () => pm.expect(pm.response.json().blocked).to.eql(true));"] } }
+          ]
+        },
+        {
+          "name": "GET me заблокированного пользователя (401)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/auth/me" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{createdUserEmail}}" }, { "key": "password", "value": "{{createdUserPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"] } }
+          ]
+        },
+        {
+          "name": "PATCH users/{id} - разблокировать",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"blocked\": false\n}" },
+            "url": { "raw": "{{baseUrl}}/api/users/{{createdUserId}}" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{adminEmail}}" }, { "key": "password", "value": "{{adminPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));", "pm.test('not blocked', () => pm.expect(pm.response.json().blocked).to.eql(false));"] } }
+          ]
+        },
+        {
+          "name": "GET me разблокированного пользователя",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/auth/me" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{createdUserEmail}}" }, { "key": "password", "value": "{{createdUserPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));", "pm.test('role MANAGER', () => pm.expect(pm.response.json().role).to.eql('MANAGER'));"] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05. Negative authentication/authorization",
+      "item": [
+        {
+          "name": "GET users без аутентификации (401)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/users" }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));", "pm.test('JSON error', () => pm.expect(pm.response.json().error).to.eql('Unauthorized'));"] } }
+          ]
+        },
+        {
+          "name": "GET users от имени USER (403)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/users" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{userEmail}}" }, { "key": "password", "value": "{{userPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"] } }
+          ]
+        },
+        {
+          "name": "GET me с неверным паролем (401)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/auth/me" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{userEmail}}" }, { "key": "password", "value": "wrong-password" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"] } }
+          ]
+        },
+        {
+          "name": "GET me заблокированного seed-пользователя (401)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/auth/me" },
+            "auth": { "type": "basic", "basic": [{ "key": "username", "value": "{{blockedEmail}}" }, { "key": "password", "value": "{{blockedPassword}}" }] }
+          },
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"] } }
+          ]
+        }
+      ]
+    }
+  ]
+}
